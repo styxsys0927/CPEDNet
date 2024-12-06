@@ -70,9 +70,12 @@ class EEGDataset_preload(Dataset):
         self.x, self.adj, self.y, self.ids = [], [], [], []
         self.scalers = {}
         for i, row in self.data.iterrows():
-            data_dir = row['data_dir'][3:] #'../' + row['data_dir']
+            # data_dir = row['data_dir'][3:] #'../' + row['data_dir']
+            # # adj_dir = '../' + row['adj_dir']
+            # cur = pd.read_csv(data_dir, header=None, index_col=index_col).values
+            data_dir = row['data_dir'][3:-4] + '_pad.npy'  # '../' + row['data_dir']
             # adj_dir = '../' + row['adj_dir']
-            cur = pd.read_csv(data_dir, header=None, index_col=index_col).values
+            cur = np.load(data_dir)
             try:
                 cur = resize(cur, (cur.shape[0], freq * 10))
                 if np.all(np.isclose(cur, cur[0, 0])):
