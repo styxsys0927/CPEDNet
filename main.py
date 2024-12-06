@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import random
 from data_process.load_dataset import load_mat
-from utils import show_results, StandardScaler
+from utils import show_results, StandardScaler, save_data
 import torch
 import torch.nn as nn
 from torchsummary import summary
@@ -29,16 +29,6 @@ device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 print('torch version: ', torch.__version__)
 print('GPU State:', device)
 
-
-# Set random seed
-seed = 1  # 123
-torch.manual_seed(seed)
-torch.cuda.manual_seed(seed)
-np.random.seed(seed)
-random.seed(seed)
-torch.backends.cudnn.enabled=False
-torch.backends.cudnn.deterministic=True
-
 # Settings
 parser = argparse.ArgumentParser(description='traffic prediction')
 
@@ -50,19 +40,19 @@ parser.add_argument('-model', type=str, default='CPEDNet', help='choose model to
 parser.add_argument('-train', type=str, default='False', help='True if the model needs to be trained')
 parser.add_argument('-model_path', type=str, default='./models/TUSZ_mini_EEGNet_ELU', help='choose model parameters to load')
 parser.add_argument('-save_path', type=str, default='./models/TUSZ_mini_EEGNet_ELU', help='location to save the new model')
-parser.add_argument('-learning_rate', type=float, default=0.0001, help='Initial learning rate.')  # 0.01
+parser.add_argument('-learning_rate', type=float, default=0.00005, help='Initial learning rate.')  # 0.01
 parser.add_argument('-epochs', type=int, default=500, help='Number of epochs to train.')  # 300
 parser.add_argument('-hidden1', type=int, default=32, help='Number of units in hidden layer 1.')  # 16
-parser.add_argument('-dropout', type=float, default=0.5, help='Dropout rate (1 - keep probability).')  # 0.5
+parser.add_argument('-dropout', type=float, default=0.2, help='Dropout rate (1 - keep probability).')  # 0.5
 parser.add_argument('-weight_decay', type=float, default=1e-4, help='Weight for L2 loss on embedding matrix.')  # 5e-4
 parser.add_argument('-early_stopping', type=int, default=20, help='Tolerance for early stopping (# of steps).')
 parser.add_argument('-max_degree', type=int, default=3, help='Maximum Chebyshev polynomial degree.')  # 3
 args = parser.parse_args()
 
-suffix = f'_CPEDNet_'
+suffix = '_CPEDNet_filtered'#'_CPEDNet_'#
 
 epochs = args.epochs
-batch_size = 16
+batch_size = 2
 lr = args.learning_rate
 step_size = 30
 gamma = 0.9 # gamma of scheduler
@@ -73,20 +63,11 @@ l_window = 10
 # chbmit
 # n_channel = 23
 # n_time = 256
-# n_flatten = 2464 # EEGNet
-# # n_flatten = 31800 # DeepConvNet
-# scaler = StandardScaler(mean=7.838725455770282e-10, std=3.0552577630838975e-05)
 
 # TUSZ
-# n_channel = 20
-# n_time = 250
-# n_flatten = 32 * 75 # EEGNet
-# n_flatten = 32 * 975 # DeepConvNet
-# scaler = StandardScaler(mean=-1.0853750276849363e-08, std=0.00029267845297306866)#mean=6.79587120466871e-07, std=0.00026694537493807645)
-# scaler = StandardScaler(mean=-1.4427272727272723e-10, std=5.36929e-05) # 1d-cnn-lstm
+n_channel = 20
+n_time = 250
 
-n_channel = 19
-n_time = 50
 # CPEDNet
 class CPEDNet(nn.Module):
     def __init__(self, n_channel, n_time, n_in, n_hidden, l_window, dropout=0.2):
@@ -117,44 +98,49 @@ class CPEDNet(nn.Module):
         )
 
     def forward(self, x, adj):
-        assert torch.isnan(x).sum() == 0 or torch.isnan(adj).sum() == 0, f"input {torch.isnan(x).sum()}, {torch.isnan(adj).sum()}, {adj}"
+        # assert torch.isnan(x).sum() == 0 or torch.isnan(adj).sum() == 0, f"input {torch.isnan(x).sum()}, {torch.isnan(adj).sum()}, {adj}"
         x = self.in_conv(x) # B, C, N, T
-        assert torch.isnan(x).sum() == 0, f"in_conv {torch.isnan(x).sum()}"
+        # assert torch.isnan(x).sum() == 0, f"in_conv {torch.isnan(x).sum()}"
         B, C, N, T = x.shape
         x = x.permute(0, 3, 2, 1)
         x = self.gcn(x, adj)
-        assert torch.isnan(x).sum() == 0, f"gcn {torch.isnan(x).sum()}"
+        # assert torch.isnan(x).sum() == 0, f"gcn {torch.isnan(x).sum()}"
         x = x.reshape(B, T, N, C).transpose(1, 2).reshape(B*N, T, C)
         x0 = F.pad(x, (0, 0, self.l_window-1, 0), mode='reflect')
         x0 = x0.unfold(1, self.l_window, 1)
         x0 = x0.reshape(B*N*T, C, self.l_window).permute(2, 0, 1) # K, B*N*T, C
-        assert torch.isnan(x0).sum() == 0, f"x0 {torch.isnan(x0).sum()}"
+        # assert torch.isnan(x0).sum() == 0, f"x0 {torch.isnan(x0).sum()}"
         x1, x2 = self.transformer(x0, x0[[-1]])
         x1, x2 = x1.reshape(B, N, T, C), x2.reshape(B, N, T, C)
-        assert torch.isnan(x1).sum() == 0, f"x1 {torch.isnan(x1).sum()}"
-        assert torch.isnan(x2).sum() == 0, f"x2 {torch.isnan(x2).sum()}"
+        # assert torch.isnan(x1).sum() == 0, f"x1 {torch.isnan(x1).sum()}"
+        # assert torch.isnan(x2).sum() == 0, f"x2 {torch.isnan(x2).sum()}"
         out = torch.concat([x.reshape(B, N, T, C), x1, x2], dim=-1).permute(0, 3, 1, 2)
         out = self.out_conv(out).squeeze((-2, -1)) # B, N,
         out = self.out_ffn(out)
 
-        assert torch.isnan(out).sum() == 0, f"out {torch.isnan(out).sum()}"
+        # assert torch.isnan(out).sum() == 0, f"out {torch.isnan(out).sum()}"
         return x1, x2, out
 
 # Evaluatoin Function
-def evaluate(model, data):
+def evaluate(model, data, save_name=None):
     model.eval()
     preds, labels = [], []
-    for x, adj, y in data:
+    for x, adj, y, ids in data:
         x_batch, y_batch = x.to(device), y.to(device)
         adj = adj.to(device)
         # print('Eval:', x_batch.mean().item(), x_batch.std().item(), y_batch.sum().item())
-        _, _, pred = net(x_batch, adj)  # forward
+        x1, x2, pred = net(x_batch, adj)  # forward
+        score = 0.5*((x1**2).mean(-1)+(x2**2).mean(-1))
+        if save_name is not None:
+            save_data(score.detach().cpu().numpy(), ids, data, save_name+'_score', transform=False)
         pred = np.array(pred.data.cpu().numpy()).argmax(axis=1)
         preds.append(pred)
         labels.append(y)
     preds, labels = np.concatenate(preds), np.concatenate(labels)
     results = show_results(labels, preds)
-
+    if save_name is not None:
+        np.save(save_name+'_pred', preds, allow_pickle=True)
+        np.save(save_name+'_labels', preds, allow_pickle=True)
     print('Tested: Acc: {}, F1: {}, PRC: {}, RCL: {}, AUC: {}'.format(results[0], results[1], results[2], results[3],
                                                                       results[4]))
     return results[1] #accuracy_score(y, np.array(pred.data.cpu().numpy()).argmax(axis=1))
@@ -168,14 +154,15 @@ def model_train(net, train, test, epochs, batch_size, scheduler, suffix):
         net.train(mode=True)
         train_loss = 0.0
         bid = 0
-        for x, adj, y in train:
+        for x, adj, y, ids in train:
             x_batch, y_batch = x.to(device), y.to(device)
             adj = adj.to(device)
             # print('Train:', x_batch.mean().item(), x_batch.std().item(), y_batch.sum().item())
             optimizer.zero_grad() # zero the parameter gradients
             x1, x2, outputs = net(x_batch, adj) # forward
-            loss = (1/epoch*((x1.permute(0, 3, 1, 2)-x_batch)**2).mean() + (1-1/epoch)*((x2.permute(0, 3, 1, 2)-x_batch)**2).mean())
-            # print(bid, 'loss rec', loss.data.cpu().numpy(), outputs.shape, y_batch.shape)
+            # loss = (1/epoch*((x1.permute(0, 3, 1, 2)-x_batch)**2).mean() + (1-1/epoch)*((x2.permute(0, 3, 1, 2)-x_batch)**2).mean())
+
+            loss = 1/epoch*(x1**2).mean() + (1-1/epoch)*(x2**2).mean()
             loss += criterion(outputs, y_batch) # calculate loss
             # print('loss all', loss.data.cpu().numpy())
             loss.backward() # backward
@@ -224,13 +211,12 @@ except:
     pass
 print('#####################################################')
 
-train_loader, val_loader, test_loader, transform = load_mat(args.dataset, os.path.join('../LightK-DSGCN/data/', args.dataset),
-                                                 split_ids=split_ids, BATCH_SIZE=batch_size)#, use_freq=True)#, transform=scaler)#, return_data=True)
-# train_loader, val_loader, test_loader, transform = load_mat(args.dataset, os.path.join('../../data/EEG/', args.dataset),
-#                                                  split_ids=split_ids, BATCH_SIZE=batch_size)
-best_f1 = model_train(net, train_loader, val_loader, epochs=epochs,
-                                  batch_size=batch_size, scheduler=scheduler, suffix=suffix)
+train_loader, val_loader, test_loader, transform = load_mat(args.dataset, os.path.join('../../data/EEG/', args.dataset),
+                                                 split_ids=split_ids, BATCH_SIZE=batch_size)
+if args.train == 'True':
+    best_f1 = model_train(net, train_loader, val_loader, epochs=epochs,
+                                      batch_size=batch_size, scheduler=scheduler, suffix=suffix)
 
 checkpoint = torch.load(f'./models/{args.dataset}{suffix}.pth', weights_only=True)
 net.load_state_dict(checkpoint)
-evaluate(net, test_loader)
+evaluate(net, test_loader, f'test_{args.dataset}{suffix}')

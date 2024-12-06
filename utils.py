@@ -6,7 +6,7 @@ import sklearn
 import sklearn.metrics
 from scipy.sparse.linalg import eigsh
 import sys
-from scipy.signal import butter, lfilter, freqz, sosfilt
+from scipy.signal import butter, lfilter, freqz, sosfilt, filtfilt
 import scipy.io as spio
 import matplotlib.pyplot as plt
 
@@ -182,6 +182,14 @@ def butter_bandpass_filter(data, lowcut, highcut, fs, order=5):
     y = sosfilt(sos, data)
     return y
 
+# Low-pass filter with 120 Hz cutoff frequency
+def lowpass_filter(data, cutoff_freq, fs, order=5):
+    # Design a Butterworth high-pass filter
+    b, a = butter(order, cutoff_freq, btype='lowpass', fs=fs, output='ba')
+    # filtered_data = filtfilt(b, a, data)  # Apply filter
+    filtered_data = np.concatenate([filtfilt(b, a, data[i, :, 0]) for i in range(data.shape[0])]).reshape(data.shape[0], data.shape[1],
+                                                                                          1)
+    return filtered_data
 
 def xt_load_rawdata(x, filter_en, resample_en):
     if filter_en == 1:
@@ -234,21 +242,35 @@ def reconstruction_errors(y_true, y_pred):
     r2 = sklearn.metrics.r2_score(y_true, y_pred)
     return mse, mape, mae, r2
 
-def save_data(data, ids, dataloader):
+def save_data(data, ids, dataloader, suffix, transform=True):
     ids = ids.tolist()
-    dirs = dataloader.dataset.data.iloc[ids]['data_dir']
+    print(ids)
+    dirs = dataloader.dataset.data.loc[ids]['data_dir']
     scalers = dataloader.dataset.scalers
-
     for i, dir in enumerate(dirs):
-        dir = dir[3:-4] + '_latentODE_channel_v2.csv'
-        np.save(dir, scalers[ids[i]].inverse_transform(data[i]), allow_pickle=True)
+        dir = dir[3:-4] + suffix #'_latentODE_1_single.csv'
+        # print(dir)
+        cur = data[i] if not transform else scalers[ids[i]].inverse_transform(data[i])
+        np.save(dir, cur, allow_pickle=True)
 
-def plot_signal(y_true, y_pred, itr):
+def plot_signal(y_true, y_pred, t, itr):
     fig = plt.figure(figsize=(8, 3), num=1, clear=True)
     ax = fig.add_subplot()
 
-    ax.plot(y_true, label='Original EEG')
-    ax.plot(y_pred, label='Reconstructed EEG')
+    ax.plot(t, y_true, label='Original EEG')
+    ax.plot(t, y_pred, label='Reconstructed EEG')
     plt.legend()
-    plt.savefig(f'./results/{itr}.png')
-    plt.show()
+    plt.savefig(f'./results/{itr}_pad.png')
+    # plt.show()
+
+def inverse_unfold(x, l_pad, l_overlap):
+    assert l_overlap > 1, "l_overlap must be larger than 1"
+    res = x[:, 0] # B, l_window, N
+    kernel = np.arange(0, 1+1/l_overlap, 1/(l_overlap-1))
+    for i in range(1, x.shape[1]):
+        cur = x[:, i]
+        cur[:, :l_overlap] = cur[:, :l_overlap] * kernel[None, :, None]
+        res[:, -l_overlap:] = res[:, -l_overlap:] * kernel[None, ::-1, None] + cur[:, :l_overlap]
+        res = np.concatenate([res, cur[:, l_overlap:]], axis=1)
+    res = res[:, :-l_pad]
+    return res
