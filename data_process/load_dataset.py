@@ -8,7 +8,7 @@ import pandas as pd
 from scipy.sparse import csr_matrix
 from scipy.sparse import lil_matrix
 from utils import *
-from data_process.datasets import EEGDataset, EEGDataset_preload, DataLoader, EEGDataset_preload_ode, EEGDataset_raw
+from data_process.datasets import EEGDataset, EEGDataset_preload, DataLoader, EEGDataset_preload_ode, EEGDataset_raw, EEGDataset_single_ode
 from skimage.transform import resize
 
 
@@ -165,6 +165,8 @@ def load_mat(dataset, data_dir, split_ids=None, BATCH_SIZE=32, transform=None, u
 def load_mat_ode(name, datadir, BATCH_SIZE=32, transform=None, use_freq=False, return_data=False):
     freqs, index_cols = {'chbmit_mini': 256, 'TUSZ_mini': 250}, {'chbmit_mini': None, 'TUSZ_mini': 0}
     data = pd.read_csv(os.path.join(datadir, 'data.csv'), header=0)
+    # dataset = EEGDataset_preload_ode(data, freq=freqs[name], index_col=index_cols[name], use_freq=use_freq,
+    #                                  transform=transform)
     dataset = EEGDataset_preload_ode(data, freq=freqs[name], index_col=index_cols[name], use_freq=use_freq,
                                      transform=transform)
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=False)

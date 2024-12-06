@@ -67,7 +67,8 @@ class EEGDataset_preload(Dataset):
         self.freq = freq
         self.index_col = index_col
         self.use_freq = use_freq
-        self.x, self.adj, self.y = [], [], []
+        self.x, self.adj, self.y, self.ids = [], [], [], []
+        self.scalers = {}
         for i, row in self.data.iterrows():
             data_dir = row['data_dir'][3:] #'../' + row['data_dir']
             # adj_dir = '../' + row['adj_dir']
@@ -78,6 +79,8 @@ class EEGDataset_preload(Dataset):
                     raise ValueError('values are too small')
                 if self.use_freq:
                     cur = xt_load_rawdata(cur, filter_en=1, resample_en=0)
+                scaler = StandardScaler(mean=cur.mean(), std=cur.std())
+                cur = scaler.transform(cur)
                 adj = np.corrcoef(cur)
                 adj = adj_to_laplacian(adj)
             except:
@@ -88,9 +91,12 @@ class EEGDataset_preload(Dataset):
             self.x.append(cur)
             self.adj.append(adj)
             self.y.append(row['label'])
+            self.ids.append(i)
+            self.scalers[i] = scaler
+
         self.x = np.stack(self.x, axis=0)
         self.adj = np.stack(self.adj, axis=0)
-        self.y = np.array(self.y)
+        self.y, self.ids = np.array(self.y), np.array(self.ids)
         self.mean, self.std = self.x.mean(), self.x.std()
         self.transform = transform if transform is not None else StandardScaler(mean=self.mean, std=self.std)
         self.x = self.transform.transform(self.x)
@@ -103,11 +109,12 @@ class EEGDataset_preload(Dataset):
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
+        ids = torch.tensor(self.ids[idx]).long()
         data = torch.tensor(self.x[idx]).unsqueeze(dim=0).float()
         adj = torch.tensor(self.adj[idx]).float()
         label = torch.tensor(self.y[idx]).long()
 
-        return data, adj, label
+        return data, adj, label, ids
 
 class EEGDataset_preload_ode(Dataset):
     """Face Landmarks dataset."""
@@ -214,3 +221,4 @@ class EEGDataset_raw(Dataset):
         label = torch.tensor(self.y[idx]).long()
 
         return data, adj, label
+
